@@ -94,14 +94,30 @@ int main(int argc, char **argv)
       }
     }
 
+    if(i==20) {
+      sprintf(buf, "Server connection has reach limited! Please connect later\n");
+
+      write(connection_fd, buf, strlen(buf));
+
+    }
+    else {
+        sprintf(buf, "Connection success!\n");
+        printf("User is from %s:%d\n", inet_ntoa(user[i].addr.sin_addr), ntohs(user[i].addr.sin_port));
+
+        write(connection_fd, buf, strlen(buf));
+
+        ret = pthread_create(&id, NULL, (void *) connection_handler, (void *)&user[i]);
+        if(ret != 0) {
+          perror('Creating Thread Error!\n');
+          exit(1);
+        }
+    }
+
+
+
     user[i].addr = cli_addr;
     user[i].sockfd = connection_fd;
 
-    ret = pthread_create(&id, NULL, (void *) connection_handler, (void *)&user[i]);
-    if(ret != 0) {
-      perror('Creating Thread Error!\n');
-      exit(1);
-    }
 
 
   }
@@ -123,7 +139,7 @@ void connection_handler(void *client)
     memset(instruct, '\0', MAX_SIZE);
 
     struct sockaddr_in addr = client->addr;
-    int sockfd = client>fd;
+    int sockfd = client->fd;
     int index = client->index;
     strcpy(file_list, client->file_list);
 
@@ -142,7 +158,7 @@ void connection_handler(void *client)
       if(strcmp(op, "login")==0){
         cmd = strtok(NULL, " \n");
         strcpy(op, cmd);
-        login_handler(op, sockfd);
+        login_handler(op, sockfd, index);
       }  else if(strcmp(op, "ls")==0){
         file_listing_handler(sockfd);
       }else if(strcmp(op, "dl")==0){
@@ -155,66 +171,39 @@ void connection_handler(void *client)
 
 }
 
-void login_handler(char id[], int sockfd){
+void login_handler(char id[], int sockfd, int idx){
     int i;
     char *cmd;
     char op[MAX_SIZE];
     char buf[MAX_SIZE];
+    struct sockaddr_in cli_listen_addr;
+    int cli_connect_fd;
 
-    memset(op, '\0', MAX_SIZE);
     memset(buf, '\0', MAX_SIZE);
+    memset(op, '\0', MAX_SIZE)
 
+    strcpy(user[idx].name, id);
 
-    for(i = 0; i < 20; i++){
-        if(user[i].fd==-1){
-            strcpy(user[i].id, uuid);
+    bzero((void *)&cli_listen_addr, sizeof(cli_listen_addr));
+    cli_listen_addr.sin_family = AF_INET;
+    cli_listen_addr.sin_addr.s_addr = user[idx].addr.sin_addr.s_addr;
+    cli_listen_addr.sin_port = htons(ntohs(user[idx].addr.sin_port) + OFFSET);
 
-            if(read(sockfd, buf, MAX_SIZE) < 0 ){
-                perror("Read Bytes Failed\n");
-                exit(1);
-            }
+    printf("Client's Port is on %d\n", ntohs(userid[idx].addr.sin_port));
+    printf("Client is listen on Port %d\n", ntohs(cli_listen_addr.sin_port));
 
-            cmd = strtok(buf, "\n");
-            strcpy(op, cmd);       //op equals client's IP address
-
-            user[i].addr.sin_family = AF_INET;
-            user[i].addr.sin_addr.s_addr = inet_addr(op);
-
-            user[i].udp_addr.sin_family = AF_INET;
-            user[i].udp_addr.sin_addr.s_addr = inet_addr(op);
-
-            cmd = strtok(NULL, "\n");
-
-            strcpy(op, cmd);       //op equals client's port
-            user[i].addr.sin_port = htons(atoi(op));
-
-            cmd = strtok(NULL, "\n");
-
-            strcpy(op, cmd);       //op equals client's port
-            user[i].udp_addr.sin_port = htons(atoi(op));
-
-            printf("Client TCP  port is:%d\n", ntohs(user[i].addr.sin_port));
-            printf("Client UDP  port is:%d\n", ntohs(user[i].udp_addr.sin_port));
-
-            user[i].fd = sockfd;
-
-            break;
-        }
+    if (connect(cli_connect_fd, (struct sockaddr *)&cli_listen_addr, sizeof(cli_listen_addr)) < 0) {
+      perror("Connect to Client Listen Port failed");
+      exit(1);
     }
 
+    
 
-    if(i==20) sprintf(buf, "Server has reach limited! Please login later\n");
-    else {
-        sprintf(buf, "Login success!\n");
-        printf("User is from %s:%d\n", inet_ntoa(user[i].addr.sin_addr), ntohs(user[i].addr.sin_port));
-    }
-
-
-
+    sprintf(buf, "Login success!\n");
     write(sockfd, buf, strlen(buf));
     sleep(1);
 
-    printf("USER:%s has login!\n", user[i].id);
+    printf("USER:%s has login!\n", id);
 
     return;
 
