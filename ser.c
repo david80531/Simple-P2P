@@ -28,13 +28,21 @@ typedef struct {
   struct sockaddr_in addr;
 } USER;
 
-USER user[20];
+typedef struct {
+  int index;
+  int sockfd;
+} WATCH;
 
-void connection_handler(void);
+USER user[20];
+WATCH watch[20];
+
+void connection_handler(void *);
+void file_change_handler(void *);
 
 int main(int argc, char **argv)
 {
   int listen_fd, connection_fd;
+  char buf[MAX_SIZE];
   struct sockaddr_in svr_addr, cli_addr;
   socklen_t addr_len;
 
@@ -42,8 +50,10 @@ int main(int argc, char **argv)
 	int i, ret;
   int flag = 1;
 
+  memset(buf, '\0', MAX_SIZE);
+
 	ret = pthread_create(&id, NULL, (void *) connection_handler, NULL);
-	if(thread_id!=0)
+	if(ret!=0)
 	{
 		printf ("Create pthread error!\n");
 		exit (1);
@@ -54,8 +64,8 @@ int main(int argc, char **argv)
   svr_addr.sin_addr.s_addr = htonl(INADDR_ANY);
   svr_addr.sin_port = htons(atoi(argv[1]));
 
-  if(listen_fd = socket(AF_INET, SOCK_STREAM, 0) <0){
-    perror('Create Socket failed');
+  if((listen_fd = socket(AF_INET, SOCK_STREAM, 0)) <0){
+    perror("Create Socket failed");
     exit(1);
   }
 
@@ -69,7 +79,7 @@ int main(int argc, char **argv)
 
   for(i = 0; i < 20 ;i++){
     user[i].index = -1;
-    memset(user[i].name, '\0'. 20);
+    memset(user[i].name, '\0', 20);
     memset(user[i].file_list, '\0', MAX_SIZE);
   }
 
@@ -125,8 +135,9 @@ int main(int argc, char **argv)
 }
 
 
-void connection_handler(void *client)
+void connection_handler(void *arg)
 {
+    USER *client = (USER *) arg;
     char buf[MAX_SIZE];
     char * cmd;
     char instruct[MAX_SIZE];
@@ -159,6 +170,7 @@ void connection_handler(void *client)
         cmd = strtok(NULL, " \n");
         strcpy(op, cmd);
         login_handler(op, sockfd, index);
+        printf("USER %s login success !\n", op);
       }  else if(strcmp(op, "ls")==0){
         file_listing_handler(sockfd);
       }else if(strcmp(op, "dl")==0){
@@ -179,6 +191,8 @@ void login_handler(char id[], int sockfd, int idx){
     struct sockaddr_in cli_listen_addr;
     int cli_connect_fd;
 
+    pthread_t id;
+
     memset(buf, '\0', MAX_SIZE);
     memset(op, '\0', MAX_SIZE)
 
@@ -189,7 +203,7 @@ void login_handler(char id[], int sockfd, int idx){
     cli_listen_addr.sin_addr.s_addr = user[idx].addr.sin_addr.s_addr;
     cli_listen_addr.sin_port = htons(ntohs(user[idx].addr.sin_port) + OFFSET);
 
-    printf("Client's Port is on %d\n", ntohs(userid[idx].addr.sin_port));
+    printf("Client's Port is on %d\n", ntohs(user[idx].addr.sin_port));
     printf("Client is listen on Port %d\n", ntohs(cli_listen_addr.sin_port));
 
     if (connect(cli_connect_fd, (struct sockaddr *)&cli_listen_addr, sizeof(cli_listen_addr)) < 0) {
@@ -197,7 +211,12 @@ void login_handler(char id[], int sockfd, int idx){
       exit(1);
     }
 
-    
+    watch[i].index = idx;
+    watch[i].sockfd = cli_connect_fd;
+
+    pthread_create(&id, NULL, (void *)file_change_handler, (void *)&watch[i]);
+
+
 
     sprintf(buf, "Login success!\n");
     write(sockfd, buf, strlen(buf));
@@ -207,5 +226,23 @@ void login_handler(char id[], int sockfd, int idx){
 
     return;
 
+
+}
+
+
+void file_change_handler(void *arg){
+    char buf[MAX_SIZE];
+    memset(buf, '\0', MAX_SIZE);
+
+    WATCH *watch = (WATCH *) arg;
+
+    while(1){
+      if(read(watch->sokcfd, buf, MAX_SIZE) > 0){
+        strcpy(user[watch->index].file_list, buf);
+      }
+      if(read(watch->sokcfd, buf, MAX_SIZE) > 0){
+         return;
+      }
+    }
 
 }
