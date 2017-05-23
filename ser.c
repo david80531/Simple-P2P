@@ -38,6 +38,7 @@ WATCH watch[20];
 
 void connection_handler(void *);
 void file_change_handler(void *);
+void login_handler(char [], int, int);
 
 int main(int argc, char **argv)
 {
@@ -51,13 +52,6 @@ int main(int argc, char **argv)
   int flag = 1;
 
   memset(buf, '\0', MAX_SIZE);
-
-	ret = pthread_create(&id, NULL, (void *) connection_handler, NULL);
-	if(ret!=0)
-	{
-		printf ("Create pthread error!\n");
-		exit (1);
-	}
 
   bzero((void *)&svr_addr, sizeof(svr_addr));
   svr_addr.sin_family = AF_INET;
@@ -93,7 +87,7 @@ int main(int argc, char **argv)
 
     addr_len = sizeof(cli_addr);
     connection_fd = accept(listen_fd, (struct sockaddr *)&cli_addr, &addr_len);
-    printf("connection is from %s(IP):%d(port), %d(cli_fd)\n", inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port), connection_fd);
+    //printf("connection is from %s(IP):%d(port), %d(cli_fd)\n", inet_ntoa(cli_addr.sin_addr), ntohs(cli_addr.sin_port), connection_fd);
 
     //setting user parameter
 
@@ -111,22 +105,22 @@ int main(int argc, char **argv)
 
     }
     else {
-        sprintf(buf, "Connection success!\n");
+        user[i].addr = cli_addr;
+        user[i].sockfd = connection_fd;
+
+
         printf("User is from %s:%d\n", inet_ntoa(user[i].addr.sin_addr), ntohs(user[i].addr.sin_port));
 
         write(connection_fd, buf, strlen(buf));
 
         ret = pthread_create(&id, NULL, (void *) connection_handler, (void *)&user[i]);
         if(ret != 0) {
-          perror('Creating Thread Error!\n');
+          perror("Creating Thread Error!\n");
           exit(1);
         }
     }
 
 
-
-    user[i].addr = cli_addr;
-    user[i].sockfd = connection_fd;
 
 
 
@@ -150,7 +144,7 @@ void connection_handler(void *arg)
     memset(instruct, '\0', MAX_SIZE);
 
     struct sockaddr_in addr = client->addr;
-    int sockfd = client->fd;
+    int sockfd = client->sockfd;
     int index = client->index;
     strcpy(file_list, client->file_list);
 
@@ -159,7 +153,7 @@ void connection_handler(void *arg)
     while(1){
       if(read(sockfd, instruct, MAX_SIZE) == 0){
         printf("Client(%d) is disconnected \n", sockfd);
-        userid[i].index = -1;
+        user[index].index = -1;
         return ;
       }
 
@@ -172,11 +166,11 @@ void connection_handler(void *arg)
         login_handler(op, sockfd, index);
         printf("USER %s login success !\n", op);
       }  else if(strcmp(op, "ls")==0){
-        file_listing_handler(sockfd);
+        //file_listing_handler(sockfd);
       }else if(strcmp(op, "dl")==0){
         cmd = strtok(NULL, " \n");
         strcpy(op, cmd);
-        download_handler(op, sockfd);
+        //download_handler(op, sockfd);
       }
   }
 
@@ -191,10 +185,10 @@ void login_handler(char id[], int sockfd, int idx){
     struct sockaddr_in cli_listen_addr;
     int cli_connect_fd;
 
-    pthread_t id;
+    pthread_t pid;
 
     memset(buf, '\0', MAX_SIZE);
-    memset(op, '\0', MAX_SIZE)
+    memset(op, '\0', MAX_SIZE);
 
     strcpy(user[idx].name, id);
 
@@ -214,7 +208,7 @@ void login_handler(char id[], int sockfd, int idx){
     watch[i].index = idx;
     watch[i].sockfd = cli_connect_fd;
 
-    pthread_create(&id, NULL, (void *)file_change_handler, (void *)&watch[i]);
+    pthread_create(&pid, NULL, (void *)file_change_handler, (void *)&watch[i]);
 
 
 
@@ -237,10 +231,10 @@ void file_change_handler(void *arg){
     WATCH *watch = (WATCH *) arg;
 
     while(1){
-      if(read(watch->sokcfd, buf, MAX_SIZE) > 0){
+      if(read(watch->sockfd, buf, MAX_SIZE) > 0){
         strcpy(user[watch->index].file_list, buf);
       }
-      if(read(watch->sokcfd, buf, MAX_SIZE) > 0){
+      if(read(watch->sockfd, buf, MAX_SIZE) > 0){
          return;
       }
     }
