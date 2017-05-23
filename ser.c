@@ -39,6 +39,8 @@ WATCH watch[20];
 void connection_handler(void *);
 void file_change_handler(void *);
 void login_handler(char [], int, int);
+void find_handler(char [], int, int);
+int check_server_file(char []);
 
 int main(int argc, char **argv)
 {
@@ -79,6 +81,8 @@ int main(int argc, char **argv)
 
   listen(listen_fd, MAX_CONNECTION);
 
+  mkdir("./serverStorage", S_IRWXU|S_IRWXG|S_IROTH|S_IXOTH);
+
   printf("Listen on port %s:%s\n", inet_ntoa(svr_addr.sin_addr), argv[1]);
   printf("Welcome to P2P server\n");
   printf("Waiting for users...\n");
@@ -105,19 +109,18 @@ int main(int argc, char **argv)
 
     }
     else {
-        user[i].addr = cli_addr;
-        user[i].sockfd = connection_fd;
+      user[i].addr = cli_addr;
+      user[i].sockfd = connection_fd;
 
+      printf("User is from %s:%d\n", inet_ntoa(user[i].addr.sin_addr), ntohs(user[i].addr.sin_port));
 
-        printf("User is from %s:%d\n", inet_ntoa(user[i].addr.sin_addr), ntohs(user[i].addr.sin_port));
+      write(connection_fd, buf, strlen(buf));
 
-        write(connection_fd, buf, strlen(buf));
-
-        ret = pthread_create(&id, NULL, (void *) connection_handler, (void *)&user[i]);
-        if(ret != 0) {
-          perror("Creating Thread Error!\n");
-          exit(1);
-        }
+      ret = pthread_create(&id, NULL, (void *) connection_handler, (void *)&user[i]);
+      if(ret != 0) {
+        perror("Creating Thread Error!\n");
+        exit(1);
+      }
     }
 
 
@@ -164,13 +167,12 @@ void connection_handler(void *arg)
         cmd = strtok(NULL, " \n");
         strcpy(op, cmd);
         login_handler(op, sockfd, index);
-        printf("USER %s login success !\n", op);
       }  else if(strcmp(op, "ls")==0){
         //file_listing_handler(sockfd);
-      }else if(strcmp(op, "dl")==0){
+      }else if(strcmp(op, "fd")==0){
         cmd = strtok(NULL, " \n");
         strcpy(op, cmd);
-        //download_handler(op, sockfd);
+        find_handler(op, sockfd, index);
       }
   }
 
@@ -184,6 +186,12 @@ void login_handler(char id[], int sockfd, int idx){
     char buf[MAX_SIZE];
     struct sockaddr_in cli_listen_addr;
     int cli_connect_fd;
+
+    cli_connect_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if(cli_connect_fd < 0){
+      perror("Create Client Connect Socket Failed\n");
+      exit(1);
+    }
 
     pthread_t pid;
 
@@ -205,6 +213,10 @@ void login_handler(char id[], int sockfd, int idx){
       exit(1);
     }
 
+    sprintf(buf, "server");                   //wrtie info to client listen port
+    write(cli_connect_fd, buf, strlen(buf));
+    sleep(1);
+
     watch[i].index = idx;
     watch[i].sockfd = cli_connect_fd;
 
@@ -212,7 +224,7 @@ void login_handler(char id[], int sockfd, int idx){
 
 
 
-    sprintf(buf, "Login success!\n");
+    sprintf(buf, "[Server Info] Login success!\n");
     write(sockfd, buf, strlen(buf));
     sleep(1);
 
@@ -225,18 +237,101 @@ void login_handler(char id[], int sockfd, int idx){
 
 
 void file_change_handler(void *arg){
-    char buf[MAX_SIZE];
-    memset(buf, '\0', MAX_SIZE);
+  WATCH *watch = (WATCH *) arg;
+  char buf[MAX_SIZE];
+  memset(buf, '\0', MAX_SIZE);
 
-    WATCH *watch = (WATCH *) arg;
+  if(read(watch->sockfd, buf, MAX_SIZE)>0){
+    printf("%s\n", buf);
+    strcpy(user[watch->index].file_list, buf);
+  }
 
-    while(1){
-      if(read(watch->sockfd, buf, MAX_SIZE) > 0){
-        strcpy(user[watch->index].file_list, buf);
-      }
-      if(read(watch->sockfd, buf, MAX_SIZE) > 0){
-         return;
+  while(1){
+    if(read(watch->sockfd, buf, MAX_SIZE) > 0){
+      strcpy(user[watch->index].file_list, buf);
+    }
+    if(read(watch->sockfd, buf, MAX_SIZE) == 0){
+      return;
+    }
+  }
+
+}
+
+void find_handler(char filename[], int sockfd, int idx){
+  int user_exist_file[20];
+  int i, exist_num = 0;
+  char *file;
+  char buf[MAX_SIZE];
+
+  for(i = 0;i < 20; i++){                      // check all clients if exist
+    if(user[i].index == -1) continue;
+    else {
+      if(user[i].index == idx) continue;
+      file = strtok(user[i].file_list, '\n');
+      strcpy(buf, file);
+
+      if(strcmp(buf, filename)==0){
+
+        user_exist_file [exist_num++] = user[i].index;
+
+      } else {
+        while(1){
+          file = strtok(NULL, '\n');
+
+          if(file == NULL) break;
+          else {
+            strcpy(buf, file);
+            if(strcmp(buf, filename)==0){
+
+              user_exist_file [exist_num++] = user[i].index;
+
+            }
+          }
+        }
       }
     }
+  }
+
+  memset(buf, '\0', MAX_SIZE);
+
+  for(i = 0; i < exist_num; i++){
+    strcat(buf, "%s\n%d\n", inet_ntoa(user[i].addr.sin_addr), htons(user[i]).addr.sin_port);
+    printf("Client file in %s\n%d\n", inet_ntoa(user[i].addr.sin_addr), htons(user[i]).addr.sin_port);
+  }
+  if(check_server_file(filename)){
+    exist_num++;
+    strcat(buf, "%s\n");
+  }
+
+  write(sockfd, buf, strlen(buf));
+  return;
+}
+
+int check_server_file(char filename []){
+  DIR *dirPtr;
+  struct dirent *direntPtr = NULL;
+  char buff[MAX_SIZE];
+  int exist = 0;
+
+
+  if((dirPtr = opendir("./serverStorage")) == NULL) {
+      perror("Failed to open directory\n");
+  } else {
+      memset(buff, '\0', MAX_SIZE);
+
+      while((direntPtr = readdir(dirPtr)) != NULL) {
+          if(strcmp(direntPtr->d_name, ".") == 0 || strcmp(direntPtr->d_name, "..") == 0) continue;
+
+          if(strcmp(filename, direntPtr->d_name)==0){
+            exist = 1;
+          }
+      }
+
+  }
+
+  closedir(dirPtr);
+
+  return exist;
+
 
 }
