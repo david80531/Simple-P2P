@@ -19,18 +19,26 @@ int user_fd [20];
 int svr_fd, listen_fd, svr_ctrl_fd;
 char svr_ip_addr[MAX_SIZE];
 int svr_port;
+char *buffer [21];
 
 void download_handler(char []);
 void printInfo(void);
 void listen_handler(void);
 void watch_file_handler(void);
+void receiving_segment_handler(void *);
+void sending_segment_handler(void *);
 
 typedef struct {
   int sockfd;
   int segment;
   int all_segment;
   char filename[MAX_SIZE];
-} transfer_para;
+} Transfer;
+
+typedef struct {
+  int sockfd;
+  char msg[MAX_SIZE];
+} Send;
 
 
 
@@ -161,7 +169,7 @@ void listen_handler(void){
   int connect_fd;
   int i, ret;
   char buf[MAX_SIZE];
-  pthread_t pid;
+  pthread_t pid, ptid;
 
   memset(buf, '\0', MAX_SIZE);
 
@@ -184,13 +192,13 @@ void listen_handler(void){
       }
 
     } else{
-      for(i = 0; i < 20; i++){
-        if(user_fd[i] != -1){
-          user_fd[i] = connect_fd;
-          break;
-        }
-      }
-      //pthread_create...
+
+      Send *sd = malloc(sizeof(Send));
+      Send->sockfd = connect_fd;
+      memset(Send->msg, '\0', MAX_SIZE);
+      strcpy(Send->msg, buf);
+
+      pthread_create(&ptid, NULL, (void *)sending_segment_handler, (void *)sd);
     }
 
   }
@@ -257,6 +265,8 @@ void download_handler(char connection_list[], char filename){
   strcpy(list, ip_port);
   all_seg = atoi(list);
 
+  pthread_t tid[all_seg];
+
   while((ip_port = strtok(NULL, '\n')) != NULL){
     strcpy(list, ip_port);
     if(strcmp(list, "server")){
@@ -291,11 +301,137 @@ void download_handler(char connection_list[], char filename){
         exit(1);
       }
 
+      Transfer *tfr = malloc(sizeof(Transfer));
 
+      tfr->all_segment = all_seg;
+      tfr->segment = cur_seg;
+      tfr->sockfd = connect_fd
+      memset(tfr->filename, '\0', MAX_SIZE);
+      strcpy(tfr->filename, filename);
+
+      pthread_create(&tid[cur_seg], NULL, (void *) receiving_segment_handler, (void *)tfr);
+
+      cur_seg++;
 
     }
 
 
     }
   }
+
+  void receiving_segment_handler(void *Arg){
+    Transfer *tfr = (Transfer *) Arg;
+    int all_seg = tfr->all_seg;
+    int cur_seg = tfr->cur_seg;
+    int sockfd = tfr->sockfd;
+    char filename [MAX_SIZE];
+    char buf [MAX_SIZE];
+    int file_size;
+    int seg_size;
+    int last_size;
+
+    memset(filename, '\0', MAX_SIZE);
+    memset(buf, '\0', MAX_SIZE);
+    strcpy(filename, tfr->filename);
+
+    sprintf(buf, "%d\n%d\n%s\n", all_seg, cur_seg, filename);
+
+    write(sockfd, buf, strlen(buf));
+
+    read(sockfd, buf, MAX_SIZE);    //read file_size
+
+    file_size = atoi(buf);
+    seg_size = file_size/all_seg;
+
+    printf("file size: %d \n", file_size);
+    printf("Start downloading %d segment\n", cur_seg);
+    printf("----------------------------\n");
+
+    if((cur_seg+1) == all_seg){
+      last_size = file_size % all_seg;
+      seg_size += last_size;
+
+      buffer[cur_seg] = malloc(sizeof(char)*seg_size);
+
+      read(sockfd, buffer[cur_seg], seg_size);
+
+      free(buffer[cur_seg]);
+
+    } else {
+      buffer[cur_seg] = malloc(sizeof(char)*seg_size);
+
+      read(sockfd, buffer[cur_seg], seg_size);
+
+      free(buffer[cur_seg]);
+    }
+
+
+    read(sockfd, buf, MAX_SIZE);           // read finish message
+    printf("%s\n", buf);
+
+    close(sockfd);
+    return
+
+  }
+
+  void sending_segment_handler(void *Arg){
+    Send *send = (Send *) Arg;
+    int sockfd = send->sockfd;
+    char msg[MAX_SIZE];
+    char buf[MAX_SIZE;]
+    char *file_info;
+    char filename[MAX_SIZE];
+    char path[MAX_SIZE];
+    int all_seg, cur_seg;
+    int file_size;
+    FILE *fp;
+
+
+    memset(filename, '\0', MAX_SIZE);
+    memset(path, '\0', MAX_SIZE);
+    memset(msg, '\0', MAX_SIZE);
+    memset(buf, '\0', MAX_SIZE);
+
+    strcpy(msg, send->msg);
+
+    file_info = strtok(msg, "\n");
+    strcpy(buf, file_info);
+    all_seg = atoi(buf);
+
+    file_info = strtok(NULL, "\n");
+    strcpy(buf, file_info);
+    cur_seg = atoi(buf);
+
+    file_info = strtok(NULL, "\n");
+    strcpy(filename, file_info);
+
+    sprintf(path, "./localStorage/%s", filename);
+
+    fp = fopen(path, "rb");
+    if(fp!=NULL){
+      fseek(fp, 0, SEEK_END);
+      file_size = ftell(fp);
+      fclose(fp);
+      sprintf(buf, "%d", file_size);
+      printf("File Size: %d\n", file_size);
+
+      write(sockfd, buf, strlen(buf));  // send file size
+
+      
+
+    } else{
+      printf("[ERROR] Can not open the file!\n");
+
+      return;
+
+    }
+
+
+
+
+
+    close(sockfd);
+    return;
+  }
+
 }
