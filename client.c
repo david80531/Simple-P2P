@@ -10,6 +10,8 @@
 #include <sys/stat.h>   /* stat information about files attributes */
 #include <time.h>
 #include <pthread.h>
+#include <fcntl.h>
+#include <sys/sendfile.h>
 
 #define MAX_SIZE 2048
 #define MAX_LINE 256
@@ -20,8 +22,9 @@ int svr_fd, listen_fd, svr_ctrl_fd;
 char svr_ip_addr[MAX_SIZE];
 int svr_port;
 char *buffer [21];
+int buffer_size[21];
 
-void download_handler(char []);
+void download_handler(char [], char []);
 void printInfo(void);
 void listen_handler(void);
 void watch_file_handler(void);
@@ -194,9 +197,9 @@ void listen_handler(void){
     } else{
 
       Send *sd = malloc(sizeof(Send));
-      Send->sockfd = connect_fd;
-      memset(Send->msg, '\0', MAX_SIZE);
-      strcpy(Send->msg, buf);
+      sd->sockfd = connect_fd;
+      memset(sd->msg, '\0', MAX_SIZE);
+      strcpy(sd->msg, buf);
 
       pthread_create(&ptid, NULL, (void *)sending_segment_handler, (void *)sd);
     }
@@ -243,33 +246,41 @@ void printInfo(void) {
   printf("[Info] Type up + filename to upload file\n");
 }
 
-void download_handler(char connection_list[], char filename){
+void download_handler(char connection_list[], char filename[]){
   char *ip_port;
   char *addr;
   char buf [MAX_SIZE];
   char list [MAX_SIZE];
   char ip[MAX_SIZE];
   char  port[MAX_SIZE];
+  char path[MAX_SIZE];
   int download_fd_arr[20];
   int connect_fd;
   struct sockaddr_in connect_addr;
-  int i;
+  int i, j;
   int all_seg, cur_seg = 0;
+  FILE *fp;
 
   memset(list, '\0', MAX_SIZE);
   memset(buf, '\0', MAX_SIZE);
   memset(ip, '\0', MAX_SIZE);
   memset(port ,'\0', MAX_SIZE);
+  memset(path, '\0', MAX_SIZE);
 
-  ip_port = strtok(connection_list, '\n')
+  printf("%s\n", connection_list);
+
+  sprintf(path, "./localStorage/%s", filename);
+
+  ip_port = strtok(connection_list, "\n");
   strcpy(list, ip_port);
   all_seg = atoi(list);
 
   pthread_t tid[all_seg];
 
-  while((ip_port = strtok(NULL, '\n')) != NULL){
+  while((ip_port = strtok(NULL, "\n")) != NULL){
     strcpy(list, ip_port);
-    if(strcmp(list, "server")){
+    printf("%s\n", list);
+    if(strcmp(list, "server")==0){
 
 
 
@@ -283,17 +294,22 @@ void download_handler(char connection_list[], char filename){
         }
       }
 
+      int count = 0;
+
       for(; i < strlen(list);i++){
-        port[i] = list[i];
+        port[count++] = list[i];
       }
+      port[i] = '\0';
 
       printf("IP: %s\n", ip);
       printf("PORT: %s\n", port);
 
+      fflush(stdout);
+
       connect_fd = socket(AF_INET, SOCK_STREAM, 0);
       connect_addr.sin_family = AF_INET;
-      connect_addr.sin_addr.s_addr = ip;
-      connect_addr.sin_port = atoi(port);
+      connect_addr.sin_addr.s_addr = inet_addr(ip);
+      connect_addr.sin_port = htons(atoi(port));
 
 
       if(connect(connect_fd, (struct sockaddr*) &connect_addr, sizeof(connect_addr)) < 0){
@@ -305,9 +321,10 @@ void download_handler(char connection_list[], char filename){
 
       tfr->all_segment = all_seg;
       tfr->segment = cur_seg;
-      tfr->sockfd = connect_fd
+      tfr->sockfd = connect_fd;
       memset(tfr->filename, '\0', MAX_SIZE);
       strcpy(tfr->filename, filename);
+
 
       pthread_create(&tid[cur_seg], NULL, (void *) receiving_segment_handler, (void *)tfr);
 
@@ -315,14 +332,27 @@ void download_handler(char connection_list[], char filename){
 
     }
 
+    for(i = 0;i < all_seg;i++){
+      pthread_join(tid[i], NULL);
+    }
+
+    fp = fopen(path, "wb");
+
+    for( i = 0 ; i < all_seg ; i++) {
+        fwrite(buffer[i], sizeof(char), buffer_size[i], fp);
+    }
+    fclose(fp);
+    for(i = 0; i < all_seg; i++){
+      free(buffer[i]);
+    }
 
     }
   }
 
   void receiving_segment_handler(void *Arg){
     Transfer *tfr = (Transfer *) Arg;
-    int all_seg = tfr->all_seg;
-    int cur_seg = tfr->cur_seg;
+    int all_seg = tfr->all_segment;
+    int cur_seg = tfr->segment;
     int sockfd = tfr->sockfd;
     char filename [MAX_SIZE];
     char buf [MAX_SIZE];
@@ -350,19 +380,21 @@ void download_handler(char connection_list[], char filename){
     if((cur_seg+1) == all_seg){
       last_size = file_size % all_seg;
       seg_size += last_size;
+      buffer_size[cur_seg] = seg_size;
 
       buffer[cur_seg] = malloc(sizeof(char)*seg_size);
 
       read(sockfd, buffer[cur_seg], seg_size);
 
-      free(buffer[cur_seg]);
+      //free(buffer[cur_seg]);
 
     } else {
+      buffer_size[cur_seg] = seg_size;
       buffer[cur_seg] = malloc(sizeof(char)*seg_size);
 
       read(sockfd, buffer[cur_seg], seg_size);
 
-      free(buffer[cur_seg]);
+      //free(buffer[cur_seg]);
     }
 
 
@@ -370,7 +402,7 @@ void download_handler(char connection_list[], char filename){
     printf("%s\n", buf);
 
     close(sockfd);
-    return
+    return;
 
   }
 
@@ -378,12 +410,14 @@ void download_handler(char connection_list[], char filename){
     Send *send = (Send *) Arg;
     int sockfd = send->sockfd;
     char msg[MAX_SIZE];
-    char buf[MAX_SIZE;]
+    char buf[MAX_SIZE];
     char *file_info;
     char filename[MAX_SIZE];
     char path[MAX_SIZE];
     int all_seg, cur_seg;
-    int file_size;
+    int file_size, seg_size;
+    int file_fd;
+    off_t offset;
     FILE *fp;
 
 
@@ -417,21 +451,26 @@ void download_handler(char connection_list[], char filename){
 
       write(sockfd, buf, strlen(buf));  // send file size
 
-      
+      seg_size = file_size / all_seg;
+      offset = seg_size * cur_seg;
+      if(cur_seg + 1 == all_seg) {
+          if(file_size % all_seg) seg_size += file_size % all_seg;
+        }
+
+
+
+      file_fd = open(path, O_RDONLY);
+      sendfile(sockfd, file_fd, &offset, seg_size);
+      sleep(2);
+      printf("%d Segment Download Complete!\n", cur_seg);
+      sprintf(buf, "%d Segment Download Complete!\n", cur_seg);
+      write(sockfd, buf, sizeof(buf));
 
     } else{
       printf("[ERROR] Can not open the file!\n");
 
-      return;
-
     }
-
-
-
-
 
     close(sockfd);
     return;
   }
-
-}
