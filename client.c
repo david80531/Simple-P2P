@@ -20,6 +20,7 @@ int svr_fd, listen_fd, svr_ctrl_fd;
 char svr_ip_addr[MAX_SIZE];
 int svr_port;
 
+void printInfo(void);
 void listen_handler(void);
 void watch_file_handler(void);
 
@@ -29,8 +30,10 @@ int main(int argc, char **argv){
   socklen_t addr_len;
   char buf[MAX_SIZE];
   char op[MAX_SIZE];
+  char filename[MAX_SIZE];
   char *cmd;
 
+  memset(filename, '\0', MAX_SIZE);
   memset(buf, '\0', MAX_SIZE);
   memset(op, '\0', MAX_SIZE);
   memset(svr_ip_addr, '\0', MAX_SIZE);
@@ -93,10 +96,15 @@ int main(int argc, char **argv){
     exit(1);
   }
 
+  mkdir("./localStorage", S_IRWXU|S_IRWXG|S_IROTH|S_IXOTH);
+
+  printInfo();
+
   while(1){
-    fgets(buf, MAX_SIZE, stdin);
 
+    printf("simpleP2P Client>");
 
+  fgets(buf, MAX_SIZE, stdin);
 
   if(write(svr_fd, buf, strlen(buf)) < 0){
         perror("Write Bytes Failed\b");
@@ -108,17 +116,20 @@ int main(int argc, char **argv){
   strcpy(op, cmd);
 
   if(strcmp(op, "login")==0){
-
-      memset(buf, '\0', MAX_SIZE);
-      read(svr_fd, buf, MAX_SIZE);
-      printf("%s\n", buf);
+    memset(buf, '\0', MAX_SIZE);
+    read(svr_fd, buf, MAX_SIZE);
+    printf("%s\n", buf);
 
   } else if(strcmp(op, "ls")==0){
         //memset(buf, '\0', MAX_SIZE);
         //read(sockfd, buf, MAX_SIZE);
         //printf("%s\n", buf);
-  } else {
-
+  } else if(strcmp(op, "dl")==0){
+    cmd = strtok(NULL, "\n");
+    strcpy(filename, cmd);
+    memset(buf, '\0', MAX_SIZE);
+    read(svr_fd, buf, MAX_SIZE);
+    printf("%s", buf);
   }
 
   }
@@ -196,4 +207,12 @@ void watch_file_handler(void){
     closedir(dirPtr);
 
     return;
+}
+
+void printInfo(void) {
+  printf("\n\n\nWelcome to P2P system!\n");
+  printf("[Info] Type login + account to login\n");
+  printf("[Info] Type ls to list all the files\n");
+  printf("[Info] Type dl + filename to download file\n");
+  printf("[Info] Type up + filename to upload file\n");
 }

@@ -39,7 +39,7 @@ WATCH watch[20];
 void connection_handler(void *);
 void file_change_handler(void *);
 void login_handler(char [], int, int);
-void find_handler(char [], int, int);
+void download_handler(char [], int, int);
 int check_server_file(char []);
 
 int main(int argc, char **argv)
@@ -169,10 +169,10 @@ void connection_handler(void *arg)
         login_handler(op, sockfd, index);
       }  else if(strcmp(op, "ls")==0){
         //file_listing_handler(sockfd);
-      }else if(strcmp(op, "fd")==0){
+      }else if(strcmp(op, "dl")==0){
         cmd = strtok(NULL, " \n");
         strcpy(op, cmd);
-        find_handler(op, sockfd, index);
+        download_handler(op, sockfd, index);
       }
   }
 
@@ -249,6 +249,7 @@ void file_change_handler(void *arg){
   while(1){
     if(read(watch->sockfd, buf, MAX_SIZE) > 0){
       strcpy(user[watch->index].file_list, buf);
+      printf("%s\n", buf);
     }
     if(read(watch->sockfd, buf, MAX_SIZE) == 0){
       return;
@@ -257,17 +258,19 @@ void file_change_handler(void *arg){
 
 }
 
-void find_handler(char filename[], int sockfd, int idx){
+void download_handler(char filename[], int sockfd, int idx){
   int user_exist_file[20];
   int i, exist_num = 0;
   char *file;
   char buf[MAX_SIZE];
+  char buf2[MAX_SIZE];
+
 
   for(i = 0;i < 20; i++){                      // check all clients if exist
     if(user[i].index == -1) continue;
     else {
       if(user[i].index == idx) continue;
-      file = strtok(user[i].file_list, '\n');
+      file = strtok(user[i].file_list, "\n");
       strcpy(buf, file);
 
       if(strcmp(buf, filename)==0){
@@ -275,17 +278,10 @@ void find_handler(char filename[], int sockfd, int idx){
         user_exist_file [exist_num++] = user[i].index;
 
       } else {
-        while(1){
-          file = strtok(NULL, '\n');
-
-          if(file == NULL) break;
-          else {
-            strcpy(buf, file);
-            if(strcmp(buf, filename)==0){
-
-              user_exist_file [exist_num++] = user[i].index;
-
-            }
+        while((file = strtok(NULL, "\n")) != NULL){
+          strcpy(buf, file);
+          if(strcmp(buf, filename)==0){
+            user_exist_file [exist_num++] = user[i].index;
           }
         }
       }
@@ -293,17 +289,31 @@ void find_handler(char filename[], int sockfd, int idx){
   }
 
   memset(buf, '\0', MAX_SIZE);
+  memset(buf2, '\0', MAX_SIZE);
 
   for(i = 0; i < exist_num; i++){
-    strcat(buf, "%s\n%d\n", inet_ntoa(user[i].addr.sin_addr), htons(user[i]).addr.sin_port);
-    printf("Client file in %s\n%d\n", inet_ntoa(user[i].addr.sin_addr), htons(user[i]).addr.sin_port);
-  }
-  if(check_server_file(filename)){
-    exist_num++;
-    strcat(buf, "%s\n");
+
+    sprintf(buf2, "%s\n%d\n", inet_ntoa(user[user_exist_file[i]].addr.sin_addr), htons(user[user_exist_file[i]].addr.sin_port));
+
+    strcat(buf, buf2);
+
+    printf("Client file in %s", buf2);
+
   }
 
-  write(sockfd, buf, strlen(buf));
+
+  if(check_server_file(filename)){
+    exist_num++;
+    printf("Exist files: %d\n", exist_num);
+    strcat(buf, "server\n");
+  }
+
+  if(exist_num > 0) {
+    write(sockfd, buf, strlen(buf));
+  } else {
+    sprintf(buf, "No such file in server and all of the clients!\n");
+    write(sockfd, buf, strlen(buf));
+  }
   return;
 }
 
