@@ -293,7 +293,7 @@ void download_handler(char filename[], int sockfd, int idx){
 
   for(i = 0; i < exist_num; i++){
 
-    sprintf(buf2, "%s\n%d\n", inet_ntoa(user[user_exist_file[i]].addr.sin_addr), htons(user[user_exist_file[i]].addr.sin_port));
+    sprintf(buf2, "%s %d\n", inet_ntoa(user[user_exist_file[i]].addr.sin_addr), htons(user[user_exist_file[i]].addr.sin_port + OFFSET));
 
     strcat(buf, buf2);
 
@@ -309,6 +309,7 @@ void download_handler(char filename[], int sockfd, int idx){
   }
 
   if(exist_num > 0) {
+    sprintf(buf, "%d\n%s", exist_num, buf);
     write(sockfd, buf, strlen(buf));
   } else {
     sprintf(buf, "No such file in server and all of the clients!\n");

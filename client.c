@@ -20,9 +20,19 @@ int svr_fd, listen_fd, svr_ctrl_fd;
 char svr_ip_addr[MAX_SIZE];
 int svr_port;
 
+void download_handler(char []);
 void printInfo(void);
 void listen_handler(void);
 void watch_file_handler(void);
+
+typedef struct {
+  int sockfd;
+  int segment;
+  int all_segment;
+  char filename[MAX_SIZE];
+} transfer_para;
+
+
 
 int main(int argc, char **argv){
   int ret, i;
@@ -130,7 +140,15 @@ int main(int argc, char **argv){
     memset(buf, '\0', MAX_SIZE);
     read(svr_fd, buf, MAX_SIZE);
     printf("%s", buf);
-  }
+
+    if(strcmp(buf, "No such file in server and all of the clients!\n")==0){
+      continue;
+    } else {
+     download_handler(buf, filename);
+   }
+ } else {
+   continue;
+ }
 
   }
 
@@ -215,4 +233,69 @@ void printInfo(void) {
   printf("[Info] Type ls to list all the files\n");
   printf("[Info] Type dl + filename to download file\n");
   printf("[Info] Type up + filename to upload file\n");
+}
+
+void download_handler(char connection_list[], char filename){
+  char *ip_port;
+  char *addr;
+  char buf [MAX_SIZE];
+  char list [MAX_SIZE];
+  char ip[MAX_SIZE];
+  char  port[MAX_SIZE];
+  int download_fd_arr[20];
+  int connect_fd;
+  struct sockaddr_in connect_addr;
+  int i;
+  int all_seg, cur_seg = 0;
+
+  memset(list, '\0', MAX_SIZE);
+  memset(buf, '\0', MAX_SIZE);
+  memset(ip, '\0', MAX_SIZE);
+  memset(port ,'\0', MAX_SIZE);
+
+  ip_port = strtok(connection_list, '\n')
+  strcpy(list, ip_port);
+  all_seg = atoi(list);
+
+  while((ip_port = strtok(NULL, '\n')) != NULL){
+    strcpy(list, ip_port);
+    if(strcmp(list, "server")){
+
+
+
+    } else {
+
+      for(i = 0 ; i < strlen(list); i++){
+        if(list[i] == ' '){
+          break;
+        } else {
+          ip[i] = list[i];
+        }
+      }
+
+      for(; i < strlen(list);i++){
+        port[i] = list[i];
+      }
+
+      printf("IP: %s\n", ip);
+      printf("PORT: %s\n", port);
+
+      connect_fd = socket(AF_INET, SOCK_STREAM, 0);
+      connect_addr.sin_family = AF_INET;
+      connect_addr.sin_addr.s_addr = ip;
+      connect_addr.sin_port = atoi(port);
+
+
+      if(connect(connect_fd, (struct sockaddr*) &connect_addr, sizeof(connect_addr)) < 0){
+        perror("Create Connection to other clients error!\n");
+        exit(1);
+      }
+
+
+
+    }
+
+
+    }
+  }
 }
