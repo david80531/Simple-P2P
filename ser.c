@@ -12,6 +12,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <pthread.h>
+#include <sys/sendfile.h>
+#include <fcntl.h>
 
 #define MAX_SIZE 2048
 #define MAX_LINE 256
@@ -33,13 +35,25 @@ typedef struct {
   int sockfd;
 } WATCH;
 
+typedef struct {
+  int sockfd;
+  int segment;
+  int all_segment;
+  char filename[MAX_SIZE];
+} Transfer;
+
 USER user[20];
 WATCH watch[20];
+char *buffer [21];
+int buffer_size[21];
 
 void connection_handler(void *);
 void file_change_handler(void *);
 void login_handler(char [], int, int);
 void download_handler(char [], int, int);
+void upload_handler(char[], int, int);
+void sending_segment_handler(int);
+void receiving_segment_handler(void *Arg);
 int check_server_file(char []);
 
 int main(int argc, char **argv)
@@ -173,6 +187,12 @@ void connection_handler(void *arg)
         cmd = strtok(NULL, " \n");
         strcpy(op, cmd);
         download_handler(op, sockfd, index);
+      } else if(strcmp(op, "up")==0){
+        cmd = strtok(NULL, " \n");
+        strcpy(op, cmd);
+        upload_handler(op, sockfd, index);
+      } else {
+        continue;
       }
   }
 
@@ -291,8 +311,6 @@ void download_handler(char filename[], int sockfd, int idx){
   memset(buf, '\0', MAX_SIZE);
   memset(buf2, '\0', MAX_SIZE);
 
-  //sprintf(buf, "%d\n", )
-
 
   for(i = 0; i < exist_num; i++){
 
@@ -312,17 +330,101 @@ void download_handler(char filename[], int sockfd, int idx){
   }
 
   if(exist_num > 0) {
-    //printf("%s\n", buf);
     sprintf(buf2, "%d\n", exist_num);
-    //sprintf(buf, "%d\n%s", exist_num, buf);
     strcat(buf2, buf);
-
-    //printf("%s\n", buf2);
     write(sockfd, buf2, strlen(buf2));
+    if(check_server_file(filename)){  //send server file
+      sending_segment_handler(sockfd);
+    }
+
   } else {
     sprintf(buf, "No such file in server and all of the clients!\n");
     write(sockfd, buf, strlen(buf));
   }
+  return;
+}
+
+void upload_handler(char filename [], int sockfd, int idx){
+  int user_exist_file[20];
+  int i, exist_num = 1;
+  char *file;
+  char buf[MAX_SIZE];
+  char path[MAX_SIZE];
+  int connect_fd;
+  struct sockaddr_in connect_addr;
+  FILE *fp;
+
+  memset(path, '\0', MAX_SIZE);
+
+  user_exist_file[0] = idx;
+
+  sprintf(path, "./serverStorage/%s", filename);
+
+  for(i = 0;i < 20; i++){                      // check all clients if exist
+    if(user[i].index == -1) continue;
+    else {
+      if(user[i].index == idx) continue;
+      file = strtok(user[i].file_list, "\n");
+      strcpy(buf, file);
+
+      if(strcmp(buf, filename)==0){
+
+        user_exist_file [exist_num++] = user[i].index;
+
+      } else {
+        while((file = strtok(NULL, "\n")) != NULL){
+          strcpy(buf, file);
+          if(strcmp(buf, filename)==0){
+            user_exist_file [exist_num++] = user[i].index;
+          }
+        }
+      }
+    }
+  }
+
+  printf("Exist files: %d\n", exist_num);
+
+  pthread_t tid[exist_num];
+
+  for(i = 0; i< exist_num; i++){
+
+    connect_fd = socket(AF_INET, SOCK_STREAM, 0);
+    connect_addr.sin_family = AF_INET;
+    connect_addr.sin_addr.s_addr = user[user_exist_file[i]].addr.sin_addr.s_addr;
+    connect_addr.sin_port = htons(ntohs(user[user_exist_file[i]].addr.sin_port) + OFFSET);
+
+    if(connect(connect_fd, (struct sockaddr*) &connect_addr, sizeof(connect_addr)) < 0){
+      perror("Create Connection to other clients error!\n");
+      exit(1);
+    }
+
+    Transfer *tfr = malloc(sizeof(Transfer));
+
+    tfr->all_segment = exist_num;
+    tfr->segment = i;
+    tfr->sockfd = connect_fd;
+    memset(tfr->filename, '\0', MAX_SIZE);
+    strcpy(tfr->filename, filename);
+
+    pthread_create(&tid[i], NULL, (void *) receiving_segment_handler, (void *)tfr);
+  }
+
+
+  for(i = 0;i < exist_num;i++){
+    pthread_join(tid[i], NULL);
+  }
+
+  fp = fopen(path, "wb");
+
+  for( i = 0 ; i < exist_num ; i++) {
+      fwrite(buffer[i], sizeof(char), buffer_size[i], fp);
+  }
+
+  fclose(fp);
+  for(i = 0; i < exist_num; i++){
+    free(buffer[i]);
+  }
+
   return;
 }
 
@@ -352,5 +454,137 @@ int check_server_file(char filename []){
 
   return exist;
 
+}
+
+void sending_segment_handler(int sockfd){
+  char buf[MAX_SIZE];
+  char msg[MAX_SIZE];
+  char filename[MAX_SIZE];
+  char *file_info;
+  char path[MAX_SIZE];
+  int all_seg, cur_seg;
+  int file_size, seg_size;
+  int file_fd;
+  off_t offset;
+  FILE *fp;
+
+  memset(path, '\0', MAX_SIZE);
+  memset(buf, '\0', MAX_SIZE);
+  memset(msg, '\0', MAX_SIZE);
+  memset(filename, '\0', MAX_SIZE);
+
+  read(sockfd, msg, MAX_SIZE); //read information form reciever
+
+  file_info = strtok(msg, "\n");
+  strcpy(buf, file_info);
+  all_seg = atoi(buf);
+
+  file_info = strtok(NULL, "\n");
+  strcpy(buf, file_info);
+  cur_seg = atoi(buf);
+
+  file_info = strtok(NULL, "\n");
+  strcpy(filename, file_info);
+
+  sprintf(path, "./serverStorage/%s", filename);
+
+  fp = fopen(path, "rb");
+  if(fp!=NULL){
+    fseek(fp, 0, SEEK_END);
+    file_size = ftell(fp);
+    fclose(fp);
+    sprintf(buf, "%d", file_size);
+    printf("File Size: %d\n", file_size);
+
+    printf("SOCK FD: %d\n", sockfd);
+
+    write(sockfd, buf, strlen(buf));  // send file size
+    sleep(1);
+
+    seg_size = file_size / all_seg;
+    offset = seg_size * cur_seg;
+    if(cur_seg + 1 == all_seg) {
+        if(file_size % all_seg) seg_size += file_size % all_seg;
+      }
+
+    printf("SEG SIZE:%d\n", seg_size);
+
+    file_fd = open(path, O_RDONLY);
+    sendfile(sockfd, file_fd, &offset, seg_size);
+
+  } else{
+    printf("[ERROR] Can not open the file!\n");
+
+  }
+
+  printf("%d Segment Sending Complete!\n", cur_seg);
+
+  return;
+
+}
+
+void receiving_segment_handler(void *Arg){
+  Transfer *tfr = (Transfer *) Arg;
+  int all_seg = tfr->all_segment;
+  int cur_seg = tfr->segment;
+  int sockfd = tfr->sockfd;
+  char filename [MAX_SIZE];
+  char buf [MAX_SIZE];
+  int file_size;
+  int seg_size;
+  int last_size;
+
+  memset(filename, '\0', MAX_SIZE);
+  memset(buf, '\0', MAX_SIZE);
+  strcpy(filename, tfr->filename);
+
+  sprintf(buf, "%d\n%d\n%s\n", all_seg, cur_seg, filename);
+
+  write(sockfd, buf, strlen(buf));
+
+  memset(buf, '\0', MAX_SIZE);
+
+  read(sockfd, buf, MAX_SIZE);    //read file_size
+  printf("Befor atoi:%s\n", buf);
+
+  file_size = atoi(buf);
+  seg_size = file_size/all_seg;
+
+  printf("file size: %d \n", file_size);
+  printf("Start uploading %d segment\n", cur_seg);
+  printf("----------------------------\n");
+
+  if((cur_seg+1) == all_seg){
+    last_size = file_size % all_seg;
+    seg_size += last_size;
+    buffer_size[cur_seg] = seg_size;
+
+    buffer[cur_seg] = malloc(sizeof(char)*seg_size);
+
+    bzero(buffer[cur_seg], seg_size);
+    read(sockfd, buffer[cur_seg], seg_size);
+
+
+
+  } else {
+    buffer_size[cur_seg] = seg_size;
+    buffer[cur_seg] = malloc(sizeof(char)*seg_size);
+
+    bzero(buffer[cur_seg], seg_size);
+    read(sockfd, buffer[cur_seg], seg_size);
+
+  }
+  memset(buf, '\0', MAX_SIZE);
+
+
+   // print finish message
+  printf("Upload finished!\n");
+  printf("----------------------------\n");
+
+
+
+  close(sockfd);
+
+  return;
 
 }
